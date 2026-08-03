@@ -18,4 +18,11 @@ int HIDSetRumbleTypeSine(
     int right_trigger,
     int duration_ms);
 
+#ifdef GFN_HAPTIC_TESTING
+uint64_t gfn_test_next_rumble_wait_ms(
+    uint64_t now_ms,
+    uint64_t last_send_started_ms,
+    uint64_t deadline_ms);
+#endif
+
 #endif

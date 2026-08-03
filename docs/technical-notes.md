@@ -90,18 +90,29 @@ replaces `_Forge_setRumbleState` with a bounded stub that resolves
 The replacement `libGeronimo.dylib` exports that bridge and re-exports the
 patched original as `libGeronimo.original.dylib`. The bridge runs only in the
 main `GeForceNOW` process, opens physical Steam Controller interfaces matching
-`28de:1304`, maps GFN's 0-30 motor levels to 16-bit amplitudes, and sends this
+`28de:1304`, maps GFN's 8-bit motor levels to 16-bit amplitudes, and sends this
 ten-byte output report:
 
 ```text
 80 00 00 00 LL LL 00 HH HH 00
 ```
 
-Active reports are refreshed every 40 ms until GFN's requested duration ends;
-a zero-amplitude report then stops both motors. Unit tests cover amplitude
-mapping, report encoding, the arm64 stub, idempotence, and rejection of unknown
-function bytes. On the tested machine, vibration was directly felt during a
-streamed game.
+Changed motor states are forwarded immediately. While a state remains active,
+the bridge refreshes the unchanged report on a 40 ms watchdog interval until
+GFN's requested duration ends; an explicit zero-amplitude command or the
+deadline stops both motors. The watchdog interval is measured from the start of
+the preceding HID write, so the write's own latency does not accumulate into
+the refresh period. This follows the timing model in
+[SDL's Steam Triton driver](https://github.com/libsdl-org/SDL/blob/cc2713c0477118d3074b625abe8df7de7118fe2e/src/joystick/hidapi/SDL_hidapi_steam_triton.c),
+which sends changed states directly and uses 40 ms only for hardware-watchdog
+refreshes. Unit tests cover amplitude mapping, report encoding, watchdog
+scheduling, the arm64 stub, idempotence, and rejection of unknown function
+bytes. On the tested machine, vibration was directly felt during a streamed
+game.
+
+A runtime trace of GFN `2.0.87.130` observed motor levels from 0 through 231.
+The bridge therefore preserves the full 0-255 input scale instead of saturating
+levels at the previously assumed value of 30.
 
 GFN `2.0.87.130` moved the relevant code and changed the relocation-dependent
 `adrp` and `bl` encodings in both 64-byte haptic functions. Their control flow
@@ -112,9 +123,28 @@ instructions or accept arbitrary function bodies.
 Re-signing the updated app can invalidate its previous Input Monitoring
 approval. In that state gamepad input still works, GFN still dispatches rumble,
 but `IOHIDManagerOpen` cannot open the physical controller. The bridge checks
-`kIOHIDRequestTypeListenEvent` and requests access once when needed. The user
-must grant Input Monitoring and relaunch the patched app before vibration can
+`kIOHIDRequestTypeListenEvent` and registers an access request once when needed.
+On the tested macOS release, `ListenEvent` does not display a normal permission
+prompt: the user must enable GeForce NOW in **System Settings → Privacy &
+Security → Input Monitoring** and relaunch the patched app before vibration can
 resume.
+
+The installer records the existing and staged apps' designated code
+requirements before replacement. If they differ, it runs only
+`tccutil reset ListenEvent com.nvidia.gfnpc.mall` after the new copy passes
+installed verification. This removes a stale code-requirement decision but
+does not grant access. `repair-input-monitoring.zsh` provides the same narrowly
+scoped reset, launches the patched app so its request is registered, and opens
+the relevant System Settings pane for explicit user approval.
+
+GFN can self-update the separately installed patched bundle before the official
+bundle is opened again. The updater removes `libGeronimo.original.dylib` and
+restores an ordinary `libGeronimo.dylib`. When that unpatched installed copy is
+newer than the official app, `install.zsh` may use it as a read-only build
+source. An installed copy that still contains the bridge is never selected as
+source. The builder also requires a valid deep signature, GFN's expected bundle
+identifier, and NVIDIA Team ID `6KR3T733EC`; the staged candidate must then pass
+the same instruction and signature verification before replacement.
 
 ## Resident BackgroundAgent collision
 

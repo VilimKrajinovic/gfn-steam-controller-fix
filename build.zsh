@@ -29,17 +29,37 @@ if [[ ! -x "$SOURCE_APP/Contents/MacOS/GeForceNOW" ]]; then
     exit 1
 fi
 
-if [[ "${SOURCE_APP:A}" == "${OUTPUT_APP:A}" ]]; then
-    print -u2 "Source and output must be different; the official app is never patched in place."
-    exit 1
-fi
-
-for command in cc ditto lipo nm otool strings codesign install_name_tool awk; do
+for command in cc ditto lipo nm otool strings codesign install_name_tool awk sed; do
     if ! command -v "$command" >/dev/null; then
         print -u2 "Required command not found: $command"
         exit 1
     fi
 done
+
+expected_bundle_id="com.nvidia.gfnpc.mall"
+expected_team_id="6KR3T733EC"
+source_bundle_id="$(/usr/libexec/PlistBuddy -c \
+    'Print :CFBundleIdentifier' "$SOURCE_APP/Contents/Info.plist" 2>/dev/null || true)"
+if [[ "$source_bundle_id" != "$expected_bundle_id" ]]; then
+    print -u2 "Source has unexpected bundle identifier: ${source_bundle_id:-missing}"
+    exit 1
+fi
+if ! codesign --verify --deep --strict "$SOURCE_APP" >/dev/null 2>&1; then
+    print -u2 "Source app does not have a valid deep code signature: $SOURCE_APP"
+    exit 1
+fi
+source_signing_info="$(codesign -dv --verbose=4 "$SOURCE_APP" 2>&1)"
+source_team_id="$(print -r -- "$source_signing_info" | \
+    sed -n 's/^TeamIdentifier=//p')"
+if [[ "$source_team_id" != "$expected_team_id" ]]; then
+    print -u2 "Source app is not signed by the expected NVIDIA team."
+    exit 1
+fi
+
+if [[ "${SOURCE_APP:A}" == "${OUTPUT_APP:A}" ]]; then
+    print -u2 "Source and output must be different; a source app is never patched in place."
+    exit 1
+fi
 
 output_parent="${OUTPUT_APP:h}"
 mkdir -p "$output_parent"

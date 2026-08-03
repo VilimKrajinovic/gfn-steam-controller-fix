@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-03
+
+### Added
+
+- add `repair-input-monitoring.zsh`, which performs an app-scoped permission
+  reset and opens both the patched app and the relevant System Settings pane.
+
+### Changed
+
+- list GeForce NOW `2.0.87.131` as the current tested release;
+- preserve GFN's full 8-bit rumble intensity range instead of saturating every
+  motor level at or above 30 to full strength;
+- forward changed rumble states immediately while retaining 40 ms watchdog
+  refreshes, instead of delaying every state change with a blocking sleep;
+- reuse a newer self-updated, now-unpatched installed copy as the build source
+  instead of replacing it with an older official app.
+
+### Fixed
+
+- reset stale Input Monitoring automatically when installation changes the app
+  signature;
+- direct users to the manual Input Monitoring switch when macOS registers the
+  request without displaying a permission prompt.
+
 ## [0.2.1] - 2026-07-22
 
 ### Changed

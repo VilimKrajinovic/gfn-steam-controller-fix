@@ -7,8 +7,8 @@ virtual Xbox controller through GFN's HID backend.
 
 The fix was validated end to end on an Apple Silicon Mac: controller input works
 in the GeForce NOW interface and inside streamed games, with vibration during
-streamed gameplay. The original GFN app, Steam installation, controller
-firmware, and macOS system security settings are not modified.
+streamed gameplay. The original GFN app, Steam installation, and controller
+firmware are not modified; SIP and other macOS protections remain enabled.
 
 > [!IMPORTANT]
 > This is an independent compatibility workaround, not an NVIDIA or Valve
@@ -23,8 +23,8 @@ firmware, and macOS system security settings are not modified.
 
 ## Tested configuration
 
-- GeForce NOW `2.0.87.130`
-- macOS `26.5.2` on Apple Silicon
+- GeForce NOW `2.0.87.131`
+- macOS `26.5.2` on a Mac mini (M4)
 - Steam Controller hardware `28de:1304`
 - Steam virtual `GamePad-1` HID `045e:028e`
 - GFN interface input: working
@@ -78,18 +78,20 @@ driver.
 ## Requirements
 
 - an Apple Silicon Mac;
-- the official GeForce NOW app at `/Applications/GeForceNOW.app`;
+- the official GeForce NOW app at `/Applications/GeForceNOW.app` for the
+  initial installation;
 - Steam running with the controller configured to expose a virtual gamepad;
 - Xcode Command Line Tools (`cc`, `lipo`, `nm`, `otool`, and `codesign`).
 
 The installer may request an administrator password because the patched app is
 placed in the system `/Applications` folder.
 
-macOS may ask for **Input Monitoring** when the haptic bridge first opens the
-physical Steam Controller. Grant access to the patched GFN copy and relaunch it.
-The bridge explicitly requests this permission when its code signature changes;
-without it, controller input still works but vibration cannot reach the physical
-device.
+macOS requires **Input Monitoring** when the haptic bridge first opens the
+physical Steam Controller. The bridge registers the request when its code
+signature changes, but macOS may not show a separate permission prompt. Open
+the patched app once, enable GeForce NOW under **System Settings → Privacy &
+Security → Input Monitoring**, then quit and relaunch it. Without this access,
+controller input still works but vibration cannot reach the physical device.
 
 CMake, a kernel extension, a DriverKit driver, a root shell, and disabling SIP
 are not required. The installer does not add a privileged helper or background
@@ -112,7 +114,8 @@ It appears in Finder's standard **Applications** folder with the display name
 `GeForceNOW-Steam-Controller`, next to but distinct from the official
 `NVIDIA GeForce NOW` app. Open the patched app for Steam Controller sessions;
 keep the official app installed because it is the clean source for builds and
-updates.
+updates. If the patched copy self-updates first and becomes newer, the installer
+can also use that now-unpatched copy as its read-only source.
 
 For a low-level custom build, `build.zsh` accepts source and output paths as
 positional arguments:
@@ -128,24 +131,36 @@ is not used by `install.zsh`.
 
 ## What the installer and builder do
 
-1. Copies the official GFN app to a staging directory.
-2. Extracts the arm64 slice of `libGeronimo.dylib`.
-3. Resolves `_GCDeviceInit` from the Mach-O symbol table.
-4. Verifies its first eight bytes against the known instruction signature.
-5. Replaces the function entry with `mov w0, #0; ret`.
-6. Recombines the patched arm64 slice with the untouched x86_64 slice.
-7. Makes GFN advertise rumble support and redirects its arm64 rumble callback
+1. Selects the newest safe unpatched source: normally the official GFN app, or
+   a newer `GeForceNOW-Steam-Controller` copy after GFN's updater has replaced
+   its patched files. The source must retain a valid deep signature from
+   NVIDIA team `6KR3T733EC` and the expected GFN bundle identifier.
+2. Copies that source to a staging directory.
+3. Extracts the arm64 slice of `libGeronimo.dylib`.
+4. Resolves `_GCDeviceInit` from the Mach-O symbol table.
+5. Verifies its first eight bytes against the known instruction signature.
+6. Replaces the function entry with `mov w0, #0; ret`.
+7. Recombines the patched arm64 slice with the untouched x86_64 slice.
+8. Makes GFN advertise rumble support and redirects its arm64 rumble callback
    to a small local HID bridge.
-8. Adds the bridge as a re-exporting `libGeronimo.dylib`; the patched original
+9. Adds the bridge as a re-exporting `libGeronimo.dylib`; the patched original
    remains beside it as `libGeronimo.original.dylib`.
-9. Sets the Finder display name to `GeForceNOW-Steam-Controller` in the main
+10. Sets the Finder display name to `GeForceNOW-Steam-Controller` in the main
    and localized bundle metadata.
-10. Ad-hoc signs the staged app and runs strict deep signature verification.
-11. The installer resets a safe-to-stop resident GFN container, replaces only
+11. Ad-hoc signs the staged app and runs strict deep signature verification.
+12. The installer resets a safe-to-stop resident GFN container, replaces only
     `/Applications/GeForceNOW-Steam-Controller.app`, and verifies the installed
     copy.
-12. If replacement or final verification fails, the installer restores the
+13. If replacement or final verification fails, the installer restores the
     previously installed patched copy.
+14. If the designated code requirement changed, the installer resets only
+    GFN's stale Input Monitoring decision so the next launch can register it
+    again.
+
+The installer never treats an already patched `libGeronimo.dylib` as source. It
+uses a newer installed copy only after GFN's updater has removed the bridge and
+restored an unpatched library. Unknown instruction bytes are still rejected
+before the installed app is replaced.
 
 The official app is never patched in place. The builder has no network access
 and downloads nothing.
@@ -183,24 +198,29 @@ The log is normally located at:
 
 A newly built ad-hoc signature can invalidate the previous Input Monitoring
 approval. Gamepad input then continues to work, but the haptic bridge cannot
-open the physical Steam Controller.
+open the physical Steam Controller. `install.zsh` detects a changed designated
+code requirement and normally resets this stale decision automatically.
 
-If reopening the patched app does not present a new permission request:
+If the prompt was dismissed or vibration still does not work:
 
 1. Quit every GeForce NOW window.
-2. Reset only GFN's Input Monitoring decision:
+2. Run the focused recovery utility:
 
 ```sh
-tccutil reset ListenEvent com.nvidia.gfnpc.mall
+./repair-input-monitoring.zsh
 ```
 
-3. Open `GeForceNOW-Steam-Controller` again.
-4. Enable it in **System Settings → Privacy & Security → Input Monitoring**.
-5. Quit and reopen the patched app once more, then retest vibration.
+3. In the System Settings pane opened by the utility, enable **GeForce NOW**
+   under **Privacy & Security → Input Monitoring**. macOS may not show a
+   separate permission prompt.
+4. Quit and reopen the patched app once more, then retest vibration.
 
-This command does not reset GFN microphone, camera, Accessibility, or other
-privacy permissions. The official and patched copies use the same NVIDIA bundle
-identifier, so the Input Monitoring decision is shared between them.
+The utility first verifies the installed patched app, refuses to run while a
+GFN window is active, resets only `ListenEvent` for GFN's bundle identifier, and
+opens both the patched app and the relevant System Settings pane. It does not
+reset microphone, camera, Accessibility, or other privacy permissions. The
+official and patched copies use the same NVIDIA bundle identifier, so the Input
+Monitoring decision is shared between them.
 
 ## Troubleshooting: "Problem Detected" after launch
 
@@ -229,11 +249,17 @@ conflict.
 
 ## Updating GeForce NOW
 
-1. Update the official app normally.
+1. Let either the official or patched copy finish its normal GFN update.
 2. Quit every GeForce NOW window.
 3. Run `./install.zsh` again.
-4. Open `/Applications/GeForceNOW-Steam-Controller.app` normally.
-5. Test the GFN interface and one streamed game.
+4. The installer uses the official app when it is current. If the patched copy
+   self-updated to a newer version and lost its patch, that copy is used as the
+   read-only source instead.
+5. Open `/Applications/GeForceNOW-Steam-Controller.app` normally.
+6. If the installer reset Input Monitoring, open GFN once, enable it under
+   **System Settings → Privacy & Security → Input Monitoring**, quit GFN, and
+   open it once more. macOS may not show a separate permission prompt.
+7. Test the GFN interface, one streamed game, and vibration.
 
 The installer temporarily preserves the previous patched copy and removes that
 backup only after the newly installed copy passes verification. Direct custom
@@ -280,6 +306,7 @@ drivers, services, or daemons.
 make check         # syntax check, compile with warnings as errors, unit tests
 make install-app   # build, verify, and install into /Applications
 make uninstall-app # remove only the installed patched copy
+make repair-input-monitoring # reset stale vibration permission and relaunch
 make build-app     # low-level build into the user Applications folder
 make verify-app    # verify the system-installed patched copy
 make clean

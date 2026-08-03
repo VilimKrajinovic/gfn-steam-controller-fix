@@ -18,7 +18,7 @@
 
 #define STEAM_VENDOR_ID 0x28de
 #define STEAM_TRITON_PRODUCT_ID 0x1304
-#define GFN_RUMBLE_MAX_LEVEL 30
+#define GFN_RUMBLE_MAX_LEVEL UINT8_MAX
 #define TRITON_RUMBLE_RESEND_MS 40
 #define MAX_HID_INTERFACES 16
 
@@ -30,6 +30,7 @@ struct bridge_state {
     uint16_t low;
     uint16_t high;
     uint64_t deadline_ms;
+    uint64_t generation;
 };
 
 struct bridge_devices {
@@ -77,6 +78,25 @@ void gfn_build_triton_rumble_report(
     report[7] = (uint8_t)(high_frequency & 0xffU);
     report[8] = (uint8_t)(high_frequency >> 8U);
 }
+
+static uint64_t next_rumble_wait_ms(
+    uint64_t now_ms,
+    uint64_t last_send_started_ms,
+    uint64_t deadline_ms) {
+    uint64_t resend_ms = last_send_started_ms + TRITON_RUMBLE_RESEND_MS;
+    uint64_t wake_ms = resend_ms < deadline_ms ? resend_ms : deadline_ms;
+    return wake_ms > now_ms ? wake_ms - now_ms : 0;
+}
+
+#ifdef GFN_HAPTIC_TESTING
+uint64_t gfn_test_next_rumble_wait_ms(
+    uint64_t now_ms,
+    uint64_t last_send_started_ms,
+    uint64_t deadline_ms) {
+    return next_rumble_wait_ms(
+        now_ms, last_send_started_ms, deadline_ms);
+}
+#endif
 
 static int number_property(IOHIDDeviceRef device, CFStringRef key) {
     CFTypeRef value = IOHIDDeviceGetProperty(device, key);
@@ -224,39 +244,52 @@ static bool send_report(
 static void *rumble_worker(void *unused) {
     (void)unused;
     struct bridge_devices devices = {0};
+    uint64_t handled_generation = 0;
+    uint64_t last_send_started_ms = 0;
 
     for (;;) {
         pthread_mutex_lock(&state.lock);
-        while (!state.active && !state.stop_pending) {
-            pthread_cond_wait(&state.changed, &state.lock);
+        for (;;) {
+            uint64_t now_ms = monotonic_ms();
+            if (state.active && now_ms >= state.deadline_ms) {
+                state.active = false;
+                state.stop_pending = true;
+                ++state.generation;
+            }
+
+            if (state.stop_pending || state.generation != handled_generation) {
+                break;
+            }
+            if (!state.active) {
+                pthread_cond_wait(&state.changed, &state.lock);
+                continue;
+            }
+
+            uint64_t wait_ms = next_rumble_wait_ms(
+                now_ms, last_send_started_ms, state.deadline_ms);
+            if (wait_ms == 0) {
+                break;
+            }
+            struct timespec wait = {
+                .tv_sec = (time_t)(wait_ms / 1000U),
+                .tv_nsec = (long)(wait_ms % 1000U) * 1000000L,
+            };
+            (void)pthread_cond_timedwait_relative_np(
+                &state.changed, &state.lock, &wait);
         }
+
         bool stop = state.stop_pending;
-        uint16_t low = state.low;
-        uint16_t high = state.high;
-        uint64_t deadline = state.deadline_ms;
+        uint16_t low = stop ? 0 : state.low;
+        uint16_t high = stop ? 0 : state.high;
+        uint64_t generation = state.generation;
         state.stop_pending = false;
         pthread_mutex_unlock(&state.lock);
 
-        if (stop) {
-            (void)send_report(&devices, 0, 0);
-            continue;
-        }
-
+        // Start the watchdog clock before the blocking HID write, as SDL does.
+        last_send_started_ms = monotonic_ms();
         (void)send_report(&devices, low, high);
-        struct timespec pause = {
-            .tv_sec = 0,
-            .tv_nsec = TRITON_RUMBLE_RESEND_MS * 1000000L,
-        };
-        nanosleep(&pause, NULL);
-
-        pthread_mutex_lock(&state.lock);
-        if (state.active && monotonic_ms() >= deadline &&
-            state.deadline_ms == deadline) {
-            state.active = false;
-            state.stop_pending = true;
-            pthread_cond_signal(&state.changed);
-        }
-        pthread_mutex_unlock(&state.lock);
+        // A changed generation makes an event received during the write run next.
+        handled_generation = generation;
     }
     return NULL;
 }
@@ -279,6 +312,7 @@ __attribute__((visibility("default"))) int HIDSetRumbleTypeSine(
     pthread_mutex_lock(&state.lock);
     state.low = low;
     state.high = high;
+    ++state.generation;
     if (low == 0 && high == 0) {
         state.active = false;
         state.stop_pending = true;
