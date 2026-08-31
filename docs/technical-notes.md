@@ -120,6 +120,13 @@ and symbol layout remained the same. The patcher accepts the newly inspected
 64-byte pair as a separate exact signature; it does not mask those changing
 instructions or accept arbitrary function bodies.
 
+GFN `2.0.88.129` retained the same haptic symbols, 64-byte function layout,
+control flow, and file offsets (`0xd4bc` and `0xd4fc`). Its data relocation
+moved by one page, changing the `adrp x8` instruction in both functions from
+`c8 76 00 d0` to `08 77 00 d0`. The patcher accepts that inspected pair as a
+third exact signature and continues to reject mixed or otherwise unknown
+function bodies.
+
 Re-signing the updated app can invalidate its previous Input Monitoring
 approval. In that state gamepad input still works, GFN still dispatches rumble,
 but `IOHIDManagerOpen` cannot open the physical controller. The bridge checks

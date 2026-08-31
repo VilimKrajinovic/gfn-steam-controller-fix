@@ -23,7 +23,7 @@ firmware are not modified; SIP and other macOS protections remain enabled.
 
 ## Tested configuration
 
-- GeForce NOW `2.0.87.131`
+- GeForce NOW `2.0.88.129`
 - macOS `26.5.2` on a Mac mini (M4)
 - Steam Controller hardware `28de:1304`
 - Steam virtual `GamePad-1` HID `045e:028e`
@@ -31,9 +31,10 @@ firmware are not modified; SIP and other macOS protections remain enabled.
 - streamed-game input: working
 - vibration during streamed gameplay: working
 
-GFN `2.0.86.124` remains covered by the exact instruction signatures. Other
-versions may work only when their input and haptic functions match a verified
-signature. The builder fails closed when they do not.
+GFN `2.0.86.124` and `2.0.87.130`/`2.0.87.131` remain covered by exact
+instruction signatures. Other versions may work only when their input and
+haptic functions match a verified signature. The builder fails closed when
+they do not.
 
 ## Why this is needed
 

@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-01
+
+### Changed
+
+- add exact haptic-function signatures for GeForce NOW `2.0.88.129` while
+  retaining fail-closed rejection of unknown or mixed-version function pairs;
+- list GeForce NOW `2.0.88.129` as the current tested release.
+
 ## [0.3.0] - 2026-08-03
 
 ### Added
